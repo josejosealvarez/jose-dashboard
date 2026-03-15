@@ -5,15 +5,15 @@ import pandas as pd
 import yfinance as yf
 
 # ------------------ CONFIG ------------------
-NEWS_API_KEY = "77e397d092b1465398b20f7301b09643"  # <-- Replace this line with your real key!
-USER_AGENT = "PersonalDashboard/1.0 (jose.jose.alvarez@gmail.com)"  # Change to your real email
-LAT, LON = 42.5378, -83.4810  # Walled Lake, MI
+NEWS_API_KEY = "YOUR_ACTUAL_NEWSAPI_KEY_HERE"  # Already set — don't change unless needed
+USER_AGENT = "PersonalDashboard/1.0 (your.email@example.com)"  # Update to your email if you want
+LAT, LON = 42.5378, -83.4811  # Walled Lake, MI
 CITY = "Walled Lake, MI"
 
 st.set_page_config(page_title="My Dashboard", layout="wide")
 
 # ------------------ CACHED FETCH FUNCTIONS ------------------
-@st.cache_data(ttl=300)  # 5 min cache
+@st.cache_data(ttl=300)  # 5 min
 def get_nws_point():
     url = f"https://api.weather.gov/points/{LAT},{LON}"
     headers = {"User-Agent": USER_AGENT, "Accept": "application/geo+json"}
@@ -33,15 +33,20 @@ def get_nws_forecast(forecast_url):
         return None
 
 @st.cache_data(ttl=60)
-def get_michigan_scores():
+def get_ncaa_games(sport, division="d1"):
     today = datetime.now().strftime("%Y/%m/%d")
-    url = f"https://ncaa-api.henrygd.me/scoreboard/football/fbs/{today}/all-conf"  # Start with football; we can add basketball/more
+    url = f"https://ncaa-api.henrygd.me/scoreboard/{sport}/{division}/{today}/all-conf"
     try:
         r = requests.get(url, timeout=10)
         data = r.json() if r.ok else []
-        # Filter for Michigan games
-        michigan_games = [g for g in data if 'michigan' in str(g).lower()]  # Simple keyword filter; improve later
-        return michigan_games or data[:5]  # Show Michigan if any, else recent
+        # Filter for Michigan games (home or away)
+        michigan_games = []
+        for g in data:
+            away = g.get('away', {}).get('name', '').lower()
+            home = g.get('home', {}).get('name', '').lower()
+            if 'michigan' in away or 'michigan' in home or 'wolverines' in away or 'wolverines' in home:
+                michigan_games.append(g)
+        return michigan_games if michigan_games else data[:3]  # Michigan if any, else recent fallback
     except:
         return []
 
@@ -85,7 +90,7 @@ def get_markets():
 st.title("My Personal Dashboard – Jose")
 st.caption(f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M %Z')} | Location: {CITY} | Refresh for latest")
 
-tab_weather, tab_sports, tab_news, tab_markets = st.tabs(["Weather (Milford)", "Michigan Wolverines", "Top News", "Markets"])
+tab_weather, tab_sports, tab_news, tab_markets = st.tabs(["Weather (Walled Lake)", "Michigan Wolverines", "Top News", "Markets"])
 
 with tab_weather:
     st.subheader("Current Weather & Forecast")
@@ -94,7 +99,7 @@ with tab_weather:
         forecast_url = point["properties"].get("forecast")
         forecast = get_nws_forecast(forecast_url) if forecast_url else None
         if forecast and "properties" in forecast:
-            for period in forecast["properties"]["periods"][:8]:  # Next day or so
+            for period in forecast["properties"]["periods"][:8]:
                 name = period["name"]
                 temp = f"{period['temperature']}°{period['temperatureUnit']}"
                 wind = period["windSpeed"]
@@ -103,24 +108,67 @@ with tab_weather:
         else:
             st.info("Forecast loading... or try refresh.")
         
-        st.markdown("### Radar (NWS Public)")
-        # Simple public NWS radar embed link (regional; adjust zoom if needed)
-        radar_url = "https://radar.weather.gov/ridge/standard/CONUS_loop.gif"  # National loop; or find local
-        st.image(radar_url, caption="National Radar Loop (updates frequently)", use_column_width=True)
-        st.caption("For local Milford view, check https://radar.weather.gov/station/KDTX/ or NWS Detroit site.")
+        st.markdown("### Radar (NWS Detroit Local – Covers Walled Lake)")
+        radar_url = "https://radar.weather.gov/ridge/standard/KDTX_loop.gif"  # Detroit radar covers Walled Lake well
+        st.image(radar_url, caption="Detroit Radar Loop (refreshes often)", use_column_width=True)
+        st.caption("Source: NWS KDTX – Walled Lake area radar.")
     else:
         st.error("Weather service temporarily unavailable. Refresh or check weather.gov.")
 
 with tab_sports:
-    st.subheader("University of Michigan Athletics")
-    games = get_michigan_scores()
-    if games:
-        st.success("Found recent/upcoming Michigan-related games!")
-        for g in games:
-            st.markdown(f"- **{g.get('away', {}).get('name', 'TBD')} @ {g.get('home', {}).get('name', 'TBD')}**  \n{g.get('status', 'Status')} | {g.get('date', 'Date')}")
-        st.caption("Data from public NCAA proxy. Shows football today; expand to basketball/news later.")
+    st.subheader("University of Michigan Athletics Updates")
+    
+    # Football
+    st.markdown("#### Football")
+    fb_games = get_ncaa_games("football", "fbs")
+    if fb_games:
+        for g in fb_games:
+            away = g.get('away', {}).get('name', 'TBD')
+            home = g.get('home', {}).get('name', 'TBD')
+            status = g.get('status', 'TBD')
+            date_time = g.get('date', 'TBD')
+            st.markdown(f"- **{away} @ {home}** | {status} | {date_time}")
     else:
-        st.warning("No games today or data issue. Check ncaa.com/scoreboard or refresh. Off-season? Try schedules tab later.")
+        st.info("No recent football data or off-season. Check ncaa.com.")
+    
+    # Men's Basketball
+    st.markdown("#### Men's Basketball")
+    bb_games = get_ncaa_games("basketball-men")
+    if bb_games:
+        for g in bb_games:
+            away = g.get('away', {}).get('name', 'TBD')
+            home = g.get('home', {}).get('name', 'TBD')
+            status = g.get('status', 'TBD')
+            date_time = g.get('date', 'TBD')
+            st.markdown(f"- **{away} @ {home}** | {status} | {date_time}")
+    else:
+        st.info("No men's basketball games today or data issue. Try refresh or check ncaa.com.")
+    
+    # Women's Basketball
+    st.markdown("#### Women's Basketball")
+    wbb_games = get_ncaa_games("basketball-women")
+    if wbb_games:
+        for g in wbb_games:
+            away = g.get('away', {}).get('name', 'TBD')
+            home = g.get('home', {}).get('name', 'TBD')
+            status = g.get('status', 'TBD')
+            date_time = g.get('date', 'TBD')
+            st.markdown(f"- **{away} @ {home}** | {status} | {date_time}")
+    else:
+        st.info("No women's basketball games today or data issue. Try refresh or check ncaa.com/scoreboard/basketball-women/d1.")
+    
+    # Men's Hockey
+    st.markdown("#### Men's Hockey")
+    hk_games = get_ncaa_games("icehockey-men")
+    if hk_games:
+        for g in hk_games:
+            away = g.get('away', {}).get('name', 'TBD')
+            home = g.get('home', {}).get('name', 'TBD')
+            status = g.get('status', 'TBD')
+            date_time = g.get('date', 'TBD')
+            st.markdown(f"- **{away} @ {home}** | {status} | {date_time}")
+    else:
+        st.info("No hockey games today or off-season. Check ncaa.com/scoreboard/icehockey-men/d1.")
 
 with tab_news:
     st.subheader("Major National & International Headlines")
@@ -133,7 +181,7 @@ with tab_news:
             link = a.get("url", "#")
             st.markdown(f"**{title}**  \n{desc}  \n*Source: {src}* — [Read full article]({link})")
     else:
-        st.error("Couldn't load news. Double-check your NewsAPI key in the code.")
+        st.error("Couldn't load news. Check API key.")
 
 with tab_markets:
     st.subheader("Stocks & Crypto Snapshot")
@@ -148,4 +196,4 @@ st.markdown("---")
 if st.button("🔄 Refresh Dashboard Now", type="primary"):
     st.rerun()
 
-st.caption("Built with Streamlit • Data from NWS, NCAA public API, NewsAPI, yfinance, CoinGecko • Personal use only")
+st.caption("Data: NWS (weather), ncaa-api.henrygd.me (sports), NewsAPI, yfinance/CoinGecko • Personal use")
