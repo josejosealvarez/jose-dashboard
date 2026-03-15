@@ -5,8 +5,8 @@ import pandas as pd
 import yfinance as yf
 
 # ------------------ CONFIG ------------------
-NEWS_API_KEY = "YOUR_ACTUAL_NEWSAPI_KEY_HERE"  # Keep as-is
-USER_AGENT = "PersonalDashboard/1.0 (your.email@example.com)"
+NEWS_API_KEY = "77e397d092b1465398b20f7301b09643"  # Keep as-is
+USER_AGENT = "PersonalDashboard/1.0 (jose.jose.alvarez@gmail.com)"
 LAT, LON = 42.5378, -83.4811  # Walled Lake, MI
 CITY = "Walled Lake, MI"
 
