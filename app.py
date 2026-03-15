@@ -5,15 +5,15 @@ import pandas as pd
 import yfinance as yf
 
 # ------------------ CONFIG ------------------
-NEWS_API_KEY = "YOUR_ACTUAL_NEWSAPI_KEY_HERE"  # Already set — don't change unless needed
-USER_AGENT = "PersonalDashboard/1.0 (your.email@example.com)"  # Update to your email if you want
+NEWS_API_KEY = "YOUR_ACTUAL_NEWSAPI_KEY_HERE"  # Keep as-is
+USER_AGENT = "PersonalDashboard/1.0 (your.email@example.com)"
 LAT, LON = 42.5378, -83.4811  # Walled Lake, MI
 CITY = "Walled Lake, MI"
 
 st.set_page_config(page_title="My Dashboard", layout="wide")
 
 # ------------------ CACHED FETCH FUNCTIONS ------------------
-@st.cache_data(ttl=300)  # 5 min
+@st.cache_data(ttl=300)
 def get_nws_point():
     url = f"https://api.weather.gov/points/{LAT},{LON}"
     headers = {"User-Agent": USER_AGENT, "Accept": "application/geo+json"}
@@ -33,20 +33,29 @@ def get_nws_forecast(forecast_url):
         return None
 
 @st.cache_data(ttl=60)
-def get_ncaa_games(sport, division="d1"):
-    today = datetime.now().strftime("%Y/%m/%d")
-    url = f"https://ncaa-api.henrygd.me/scoreboard/{sport}/{division}/{today}/all-conf"
+def get_ncaa_games(sport, division="d1", date_str=None):
+    if date_str is None:
+        date_str = datetime.now().strftime("%Y/%m/%d")
+    url = f"https://ncaa-api.henrygd.me/scoreboard/{sport}/{division}/{date_str}/all-conf"
     try:
         r = requests.get(url, timeout=10)
         data = r.json() if r.ok else []
-        # Filter for Michigan games (home or away)
-        michigan_games = []
-        for g in data:
-            away = g.get('away', {}).get('name', '').lower()
-            home = g.get('home', {}).get('name', '').lower()
-            if 'michigan' in away or 'michigan' in home or 'wolverines' in away or 'wolverines' in home:
-                michigan_games.append(g)
-        return michigan_games if michigan_games else data[:3]  # Michigan if any, else recent fallback
+        michigan_games = [g for g in data if 'mich' in str(g).lower()]  # Broader filter: mich, michigan, wolverines
+        return michigan_games if michigan_games else data[:5]
+    except:
+        return []
+
+@st.cache_data(ttl=3600)  # Longer cache for schedule
+def get_ncaa_schedule(sport, division="d1", year=None):
+    if year is None:
+        year = datetime.now().strftime("%Y")
+    url = f"https://ncaa-api.henrygd.me/schedule/{sport}/{division}/{year}"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json() if r.ok else []
+        # Filter upcoming Michigan games (simple: future dates with 'mich')
+        upcoming = [g for g in data if 'mich' in str(g).lower() and 'date' in g and g['date'] > datetime.now().isoformat()]
+        return upcoming[:5]  # Top 5 upcoming
     except:
         return []
 
@@ -64,7 +73,6 @@ def get_markets():
     tickers = {"S&P 500": "^GSPC", "Dow": "^DJI", "Nasdaq": "^IXIC"}
     crypto = {"Bitcoin": "bitcoin", "Ethereum": "ethereum"}
     data = {}
-    
     for name, sym in tickers.items():
         try:
             df = yf.Ticker(sym).history(period="2d")
@@ -75,15 +83,12 @@ def get_markets():
                 data[name] = f"{close:,.2f} ({pct:+.2f}%)"
         except:
             pass
-    
     try:
         cg = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true", timeout=5).json()
-        for coin in crypto:
-            info = cg.get(crypto[coin], {})
-            data[coin] = f"${info.get('usd', 'N/A'):,.0f} ({info.get('usd_24h_change', 0):+.2f}%)"
+        for coin, info in cg.items():
+            data[coin.capitalize()] = f"${info['usd']:,.0f} ({info['usd_24h_change']:+.2f}%)"
     except:
         pass
-    
     return data
 
 # ------------------ MAIN APP ------------------
@@ -100,88 +105,57 @@ with tab_weather:
         forecast = get_nws_forecast(forecast_url) if forecast_url else None
         if forecast and "properties" in forecast:
             for period in forecast["properties"]["periods"][:8]:
-                name = period["name"]
-                temp = f"{period['temperature']}°{period['temperatureUnit']}"
-                wind = period["windSpeed"]
-                short = period["shortForecast"]
-                st.markdown(f"**{name}**: {short} — Temp {temp}, Wind {wind}")
+                st.markdown(f"**{period['name']}**: {period['shortForecast']} — Temp {period['temperature']}°{period['temperatureUnit']}, Wind {period['windSpeed']}")
         else:
             st.info("Forecast loading... or try refresh.")
         
         st.markdown("### Radar (NWS Detroit Local – Covers Walled Lake)")
-        radar_url = "https://radar.weather.gov/ridge/standard/KDTX_loop.gif"  # Detroit radar covers Walled Lake well
-        st.image(radar_url, caption="Detroit Radar Loop (refreshes often)", use_column_width=True)
-        st.caption("Source: NWS KDTX – Walled Lake area radar.")
+        radar_url = "https://radar.weather.gov/ridge/standard/KDTX_loop.gif"
+        st.image(radar_url, caption="Detroit Radar Loop (refreshes often)", width=600, use_column_width=False)  # Smaller size!
+        st.caption("Source: NWS KDTX – resized for better fit.")
     else:
-        st.error("Weather service temporarily unavailable. Refresh or check weather.gov.")
+        st.error("Weather unavailable. Refresh or check weather.gov.")
 
 with tab_sports:
     st.subheader("University of Michigan Athletics Updates")
     
-    # Football
-    st.markdown("#### Football")
-    fb_games = get_ncaa_games("football", "fbs")
-    if fb_games:
-        for g in fb_games:
-            away = g.get('away', {}).get('name', 'TBD')
-            home = g.get('home', {}).get('name', 'TBD')
-            status = g.get('status', 'TBD')
-            date_time = g.get('date', 'TBD')
-            st.markdown(f"- **{away} @ {home}** | {status} | {date_time}")
-    else:
-        st.info("No recent football data or off-season. Check ncaa.com.")
+    today_str = datetime.now().strftime("%Y/%m/%d")
     
-    # Men's Basketball
-    st.markdown("#### Men's Basketball")
-    bb_games = get_ncaa_games("basketball-men")
-    if bb_games:
-        for g in bb_games:
-            away = g.get('away', {}).get('name', 'TBD')
-            home = g.get('home', {}).get('name', 'TBD')
-            status = g.get('status', 'TBD')
-            date_time = g.get('date', 'TBD')
-            st.markdown(f"- **{away} @ {home}** | {status} | {date_time}")
-    else:
-        st.info("No men's basketball games today or data issue. Try refresh or check ncaa.com.")
-    
-    # Women's Basketball
-    st.markdown("#### Women's Basketball")
-    wbb_games = get_ncaa_games("basketball-women")
-    if wbb_games:
-        for g in wbb_games:
-            away = g.get('away', {}).get('name', 'TBD')
-            home = g.get('home', {}).get('name', 'TBD')
-            status = g.get('status', 'TBD')
-            date_time = g.get('date', 'TBD')
-            st.markdown(f"- **{away} @ {home}** | {status} | {date_time}")
-    else:
-        st.info("No women's basketball games today or data issue. Try refresh or check ncaa.com/scoreboard/basketball-women/d1.")
-    
-    # Men's Hockey
-    st.markdown("#### Men's Hockey")
-    hk_games = get_ncaa_games("icehockey-men")
-    if hk_games:
-        for g in hk_games:
-            away = g.get('away', {}).get('name', 'TBD')
-            home = g.get('home', {}).get('name', 'TBD')
-            status = g.get('status', 'TBD')
-            date_time = g.get('date', 'TBD')
-            st.markdown(f"- **{away} @ {home}** | {status} | {date_time}")
-    else:
-        st.info("No hockey games today or off-season. Check ncaa.com/scoreboard/icehockey-men/d1.")
+    def display_section(title, sport, div, is_schedule_fallback=False):
+        st.markdown(f"#### {title}")
+        games = get_ncaa_games(sport, div, today_str)
+        st.caption(f"Fetched {len(games)} games today for {sport}")
+        if games:
+            for g in games:
+                away = g.get('away', {}).get('name', 'TBD')
+                home = g.get('home', {}).get('name', 'TBD')
+                status = g.get('status', 'TBD')
+                date_time = g.get('date', 'TBD')
+                st.markdown(f"- **{away} @ {home}** | {status} | {date_time}")
+        else:
+            st.info(f"No games today for {title}.")
+            if not is_schedule_fallback:
+                upcoming = get_ncaa_schedule(sport, div)
+                if upcoming:
+                    st.markdown("**Upcoming games (next few):**")
+                    for u in upcoming:
+                        st.markdown(f"- {u.get('date', 'TBD')}: {u.get('away', {}).get('name', 'TBD')} @ {u.get('home', {}).get('name', 'TBD')}")
+                else:
+                    st.info("No upcoming schedule data. Check ncaa.com directly.")
+
+    display_section("Football", "football", "fbs")
+    display_section("Men's Basketball", "basketball-men", "d1")
+    display_section("Women's Basketball", "basketball-women", "d1")
+    display_section("Men's Hockey", "icehockey-men", "d1")
 
 with tab_news:
     st.subheader("Major National & International Headlines")
     articles = get_top_news()
     if articles:
         for a in articles:
-            title = a.get("title", "No title")
-            desc = a.get("description", "")
-            src = a.get("source", {}).get("name", "Unknown")
-            link = a.get("url", "#")
-            st.markdown(f"**{title}**  \n{desc}  \n*Source: {src}* — [Read full article]({link})")
+            st.markdown(f"**{a.get('title')}**  \n{a.get('description')}  \n*Source: {a.get('source', {}).get('name')}* — [Read]({a.get('url')})")
     else:
-        st.error("Couldn't load news. Check API key.")
+        st.error("News load failed. Check API key.")
 
 with tab_markets:
     st.subheader("Stocks & Crypto Snapshot")
@@ -190,10 +164,10 @@ with tab_markets:
         df = pd.DataFrame.from_dict(markets, orient="index", columns=["Current (Change)"])
         st.table(df.style.set_properties(**{'text-align': 'right'}))
     else:
-        st.warning("Market data fetch failed. Refresh.")
+        st.warning("Markets unavailable. Refresh.")
 
 st.markdown("---")
 if st.button("🔄 Refresh Dashboard Now", type="primary"):
     st.rerun()
 
-st.caption("Data: NWS (weather), ncaa-api.henrygd.me (sports), NewsAPI, yfinance/CoinGecko • Personal use")
+st.caption("Sports via free ncaa-api.henrygd.me (best free option) • Other data: NWS, NewsAPI, yfinance/CoinGecko")
